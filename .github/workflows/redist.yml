@@ -1,0 +1,75 @@
+name: Redist
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        haxe: ["4.2.5"]
+        hl: ["1.12"]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # Checkout
+      - uses: actions/checkout@v2
+
+      # Install haxe
+      - uses: krdlab/setup-haxe@v1
+        with:
+          haxe-version: ${{ matrix.haxe }}
+      - run: haxe --version
+
+      # Install hashlink
+      - if: matrix.os == 'macos-latest'
+        run: |
+          brew install --build-from-source hashlink
+          hl --version
+
+      - if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get install libpng-dev libturbojpeg-dev libvorbis-dev libopenal-dev libsdl2-dev libmbedtls-dev libuv1-dev libsqlite3-dev
+          ldconfig -v 2>/dev/null | grep -v ^$'\t'
+          curl -L -o hl.zip https://github.com/HaxeFoundation/hashlink/archive/refs/tags/${{ matrix.hl }}.zip
+          unzip -d /tmp hl.zip
+          (cd /tmp/hashlink-${{ matrix.hl }} ; make ; sudo make install ; sudo ldconfig)
+          hl --version
+
+      - if: matrix.os == 'windows-latest'
+        run: |
+          Invoke-WebRequest -OutFile hl.zip https://github.com/HaxeFoundation/hashlink/releases/download/${{ matrix.hl }}/hl-${{ matrix.hl }}.0-win.zip
+          Expand-Archive -Path hl.zip -DestinationPath $env:TEMP
+          $HashlinkPath = Join-Path $env:TEMP "hl-${{ matrix.hl }}.0-win" -Resolve
+          $MsvcrPath = Join-Path $env:WINDIR "System32" "msvcr120.dll" -Resolve
+          Copy-Item -Path $MsvcrPath -Destination $HashlinkPath
+          $HashlinkPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - if: matrix.os == 'windows-latest'
+        run: hl.exe --version
+
+      - run: haxelib git hashlink https://github.com/HaxeFoundation/hashlink.git master other/haxelib/
+
+      # Install libs
+      - run: haxe setup.hxml
+      - run: haxelib list
+
+      # Try to build
+      - if: matrix.os == 'macos-latest'
+        run: haxelib run redistHelper build.opengl.hxml -o redist -p HaxeHeapsGame -mac -zip
+      - if: matrix.os == 'ubuntu-latest'
+        run: haxelib run redistHelper build.opengl.hxml -o redist -p HaxeHeapsGame -linux -zip
+      - if: matrix.os == 'windows-latest'
+        run: haxelib run redistHelper build.js.hxml build.directx.hxml -o redist -p HaxeHeapsGame -zip
+
+      # Upload artifacts
+      - uses: actions/upload-artifact@v3
+        with:
+          name: binaries
+          path: redist/*
